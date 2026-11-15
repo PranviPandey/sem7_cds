@@ -47,7 +47,7 @@ TARGET = "Exam_Score"
 # ---------------- DATA ----------------
 @st.cache_data
 def load_data():
-    path = Path(__file__).resolve().parent/ "StudentPerformanceFactors.csv"
+    path = Path(__file__).resolve().parent / "StudentPerformanceFactors.csv"
     if not path.exists():
         raise FileNotFoundError(f"Dataset not found: {path}")
     raw = pd.read_csv(path)
@@ -173,8 +173,67 @@ def make_recommendations(data, ctable):
 insights = make_insights(df,corr)
 recs = make_recommendations(df,corr)
 
+# ---------------- ATTRIBUTE TYPE CLASSIFICATION ----------------
+# These labels describe the meaning/measurement level of the supplied dataset.
+# The pandas dtype is also displayed separately because storage type and
+# statistical/measurement type are not always the same thing.
+ATTRIBUTE_INFO = {
+    "Hours_Studied": ("Quantitative", "Discrete", "Ratio", "Number of hours studied"),
+    "Attendance": ("Quantitative", "Continuous", "Ratio", "Attendance percentage"),
+    "Parental_Involvement": ("Categorical", "Ordinal", "Ordinal", "Low / Medium / High involvement"),
+    "Access_to_Resources": ("Categorical", "Ordinal", "Ordinal", "Low / Medium / High access"),
+    "Extracurricular_Activities": ("Categorical", "Nominal", "Nominal", "Whether the student participates"),
+    "Sleep_Hours": ("Quantitative", "Continuous", "Ratio", "Hours of sleep per day"),
+    "Previous_Scores": ("Quantitative", "Discrete", "Ratio", "Previous examination score"),
+    "Motivation_Level": ("Categorical", "Ordinal", "Ordinal", "Low / Medium / High motivation"),
+    "Internet_Access": ("Categorical", "Nominal", "Nominal", "Internet access availability"),
+    "Tutoring_Sessions": ("Quantitative", "Discrete", "Ratio", "Number of tutoring sessions"),
+    "Family_Income": ("Categorical", "Ordinal", "Ordinal", "Income category (ordered levels)"),
+    "Teacher_Quality": ("Categorical", "Ordinal", "Ordinal", "Low / Medium / High teacher quality"),
+    "School_Type": ("Categorical", "Nominal", "Nominal", "School category"),
+    "Peer_Influence": ("Categorical", "Ordinal", "Ordinal", "Negative / Neutral / Positive influence"),
+    "Physical_Activity": ("Quantitative", "Discrete", "Ratio", "Recorded physical-activity amount"),
+    "Learning_Disabilities": ("Categorical", "Nominal", "Nominal", "Whether a learning disability is recorded"),
+    "Parental_Education_Level": ("Categorical", "Ordinal", "Ordinal", "Ordered education levels"),
+    "Distance_from_Home": ("Categorical", "Ordinal", "Ordinal", "Near / Moderate / Far distance bands"),
+    "Gender": ("Categorical", "Nominal", "Nominal", "Gender category in the dataset"),
+    "Exam_Score": ("Quantitative", "Discrete", "Interval", "Examination score; outcome/target variable"),
+}
+
+def build_attribute_dictionary(data):
+    rows = []
+    for col in data.columns:
+        if col in ATTRIBUTE_INFO:
+            broad, subtype, scale, meaning = ATTRIBUTE_INFO[col]
+        elif pd.api.types.is_numeric_dtype(data[col]):
+            broad = "Quantitative"
+            subtype = "Discrete" if pd.api.types.is_integer_dtype(data[col]) else "Continuous"
+            scale = "Not specified"
+            meaning = "Numeric attribute; confirm its units and interpretation from the dataset documentation."
+        else:
+            broad, subtype, scale = "Categorical", "Nominal", "Nominal"
+            meaning = "Category/label; confirm category ordering from the dataset documentation."
+        examples = ", ".join(map(str, data[col].dropna().unique()[:5]))
+        if data[col].nunique(dropna=True) > 5:
+            examples += ", …"
+        role = "Target / dependent variable" if col == TARGET else "Predictor / input attribute"
+        rows.append({
+            "Attribute": col,
+            "Pandas data type": str(data[col].dtype),
+            "Broad type": broad,
+            "Subtype": subtype,
+            "Measurement scale": scale,
+            "Role": role,
+            "Unique values": int(data[col].nunique(dropna=True)),
+            "Example values": examples,
+            "Description": meaning,
+        })
+    return pd.DataFrame(rows)
+
+attribute_dictionary = build_attribute_dictionary(df)
+
 # ---------------- NAVIGATION ----------------
-pages=["Overview","Exploratory Analysis","Statistical Analysis","Regression Analysis",
+pages=["Overview","Attribute Types & Data Dictionary","Exploratory Analysis","Statistical Analysis","Regression Analysis",
        "Student Group Insights","Recommendations & Reports"]
 with st.sidebar:
     st.markdown('<div style="font-size:25px;font-weight:800;color:#38BDF8;">🎓 Student Analytics</div><div style="color:#94A3B8;font-size:12px;">Performance Intelligence System</div>',unsafe_allow_html=True)
@@ -235,6 +294,45 @@ if page=="Overview":
 # ============================================================
 # PAGE 2 - EXPLORATORY ANALYSIS
 # ============================================================
+elif page=="Attribute Types & Data Dictionary":
+    heading("Attribute Classification")
+    st.write("This page identifies the type of every dataset attribute. It separates the **Pandas storage dtype** from the **statistical variable type** and **measurement scale**.")
+    st.info("A variable can be stored as text in the CSV but still have an ordinal meaning (for example, Low / Medium / High). The two classifications are therefore shown separately.")
+    type_counts = attribute_dictionary["Broad type"].value_counts()
+    c = st.columns(3)
+    c[0].metric("Total attributes", len(attribute_dictionary))
+    c[1].metric("Quantitative", int(type_counts.get("Quantitative", 0)))
+    c[2].metric("Categorical", int(type_counts.get("Categorical", 0)))
+
+    heading("Complete Data Dictionary")
+    st.dataframe(attribute_dictionary, hide_index=True, use_container_width=True)
+
+    heading("Filter Attributes by Type")
+    selected_types = st.multiselect("Show variable types", ["Quantitative", "Categorical"],
+                                    default=["Quantitative", "Categorical"])
+    filtered_dictionary = attribute_dictionary[attribute_dictionary["Broad type"].isin(selected_types)]
+    st.dataframe(filtered_dictionary, hide_index=True, use_container_width=True)
+
+    heading("How to Interpret the Types")
+    a, b = st.columns(2)
+    with a:
+        with st.container(border=True):
+            st.markdown("### Quantitative variables")
+            st.write("Numerical measurements or counts. Discrete variables are countable values; continuous variables can, in principle, take fractional values within a range.")
+            st.markdown("**Examples:** Hours_Studied, Attendance, Sleep_Hours, Previous_Scores, Tutoring_Sessions, Physical_Activity, Exam_Score.")
+    with b:
+        with st.container(border=True):
+            st.markdown("### Categorical variables")
+            st.write("Variables that represent groups or labels. Nominal categories have no inherent order; ordinal categories have a meaningful order.")
+            st.markdown("**Examples:** Gender and School_Type are nominal; Motivation_Level and Parental_Involvement are ordinal.")
+
+    heading("Download Data Dictionary")
+    st.download_button("Download Attribute Types (CSV)",
+                       attribute_dictionary.to_csv(index=False).encode("utf-8"),
+                       "student_performance_attribute_dictionary.csv", "text/csv",
+                       use_container_width=True)
+    st.caption("Classification follows the supplied Student Performance Factors dataset's intended meanings. Check the original dataset documentation if you recode categories or use a different version of the CSV.")
+
 elif page=="Exploratory Analysis":
     heading("Explore Numerical Variables")
     var=st.selectbox("Numerical variable",numeric,index=numeric.index(TARGET))
